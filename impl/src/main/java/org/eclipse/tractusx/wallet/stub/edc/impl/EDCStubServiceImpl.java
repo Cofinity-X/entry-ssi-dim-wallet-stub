@@ -126,13 +126,13 @@ public class EDCStubServiceImpl implements EDCStubService {
             JWT jwt = JWTParser.parse(accessToken);
             JWTClaimsSet claimsSet = new JWTClaimsSet.Builder()
                     .issuer(selfDidDocument.getId())
+                    .jwtID(UUID.randomUUID().toString())
                     .audience(partnerDid)
                     .subject(selfDidDocument.getId())
                     .expirationTime(expiryTime)
                     .claim(Constants.BPN, selfBpn)
                     .claim(Constants.NONCE, jwt.getJWTClaimsSet().getStringClaim(Constants.NONCE))
-                    .claim(Constants.ACCESS_TOKEN, accessToken).build();
-
+                    .claim(Constants.TOKEN, accessToken).build();
             SignedJWT signedJWT = CommonUtils.signedJWT(claimsSet, selfKeyPair, selfDidDocument.getVerificationMethod().getFirst().getId());
             String serialize = signedJWT.serialize();
             log.debug("Token created with access_token -> {}", serialize);
@@ -228,6 +228,7 @@ public class EDCStubServiceImpl implements EDCStubService {
         } catch (ParseStubException | IllegalArgumentException | InternalErrorException e) {
             throw e;
         } catch (Exception e) {
+            log.error("Internal Error while creating STS token", e);
             throw new InternalErrorException("Internal Error: " + e.getMessage());
         }
     }
@@ -304,6 +305,7 @@ public class EDCStubServiceImpl implements EDCStubService {
         } catch (IllegalArgumentException | InternalErrorException | ParseStubException e) {
             throw e;
         } catch (Exception e) {
+            log.error("Internal Error while querying presentations", e);
             throw new InternalErrorException("Internal Error: " + e.getMessage());
         }
     }

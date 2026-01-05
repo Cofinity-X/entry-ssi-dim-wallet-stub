@@ -268,8 +268,8 @@ class EDCTest {
         Assertions.assertEquals(jwtClaimsSet.getSubject(), consumerDid);
 
         //validate inner token
-        Assertions.assertNotNull(jwtClaimsSet.getStringClaim(Constants.ACCESS_TOKEN));
-        String innerToken = jwtClaimsSet.getStringClaim(Constants.ACCESS_TOKEN);
+        Assertions.assertNotNull(jwtClaimsSet.getStringClaim(Constants.TOKEN));
+        String innerToken = jwtClaimsSet.getStringClaim(Constants.TOKEN);
 
         Assertions.assertEquals(requestedInnerToken, innerToken);
         JWTClaimsSet innerTokenClaim = tokenService.verifyTokenAndGetClaims(innerToken);
