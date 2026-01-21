@@ -60,6 +60,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
@@ -117,13 +118,14 @@ public class EDCStubServiceImpl implements EDCStubService {
         }
     }
 
-    private static String createSTSWithoutScope(CreateCredentialWithoutScopeRequest withAccessTokenRequest, DidDocument selfDidDocument, Date expiryTime, String selfBpn, KeyPair selfKeyPair, DidDocument partnerDidDocument) throws ParseException {
+    private static String createSTSWithoutScope(CreateCredentialWithoutScopeRequest withAccessTokenRequest, DidDocument selfDidDocument, Date expiryTime, String selfBpn, KeyPair selfKeyPair) throws ParseException {
         try {
+            String partnerDid = withAccessTokenRequest.getSignToken().getAudience();
             String accessToken = CommonUtils.cleanToken(withAccessTokenRequest.getSignToken().getToken());
             JWT jwt = JWTParser.parse(accessToken);
             JWTClaimsSet claimsSet = new JWTClaimsSet.Builder()
                     .issuer(selfDidDocument.getId())
-                    .audience(List.of(partnerDidDocument.getId()))
+                    .audience(partnerDid)
                     .subject(selfDidDocument.getId())
                     .expirationTime(expiryTime)
                     .claim(Constants.BPN, selfBpn)
@@ -141,7 +143,7 @@ public class EDCStubServiceImpl implements EDCStubService {
         }
     }
 
-    private static String createSTSWithScope(CreateCredentialWithScopeRequest withScopeRequest, DidDocument selfDidDocument, Date expiryTime, String selfBpn, KeyPair selfKeyPair, DidDocument partnerDidDocument, String partnerBpn) {
+    private static String createSTSWithScope(CreateCredentialWithScopeRequest withScopeRequest, DidDocument selfDidDocument, Date expiryTime, String selfBpn, KeyPair selfKeyPair, String partnerBpn) {
         try {
             String consumerDid = withScopeRequest.getGrantAccess().getConsumerDid();
             String providerDid = withScopeRequest.getGrantAccess().getProviderDid();
@@ -149,7 +151,7 @@ public class EDCStubServiceImpl implements EDCStubService {
 
             JWTClaimsSet tokeJwtClaimsSet = new JWTClaimsSet.Builder()
                     .issuer(selfDidDocument.getId())
-                    .audience(List.of(partnerDidDocument.getId()))
+                    .audience(providerDid)
                     .subject(selfDidDocument.getId())
                     .expirationTime(expiryTime)
                     .issueTime(Date.from(Instant.now()))
@@ -164,12 +166,12 @@ public class EDCStubServiceImpl implements EDCStubService {
 
             JWTClaimsSet claimsSet = new JWTClaimsSet.Builder()
                     .issuer(selfDidDocument.getId())
-                    .audience(List.of(partnerDidDocument.getId()))
+                    .audience(providerDid)
                     .subject(selfDidDocument.getId())
                     .expirationTime(expiryTime)
                     .issueTime(Date.from(Instant.now()))
                     .jwtID(UUID.randomUUID().toString())
-                    .claim(Constants.BPN, partnerBpn)
+                    .claim(Constants.BPN, Optional.ofNullable(partnerBpn).orElse( "null"))
                     .claim(Constants.NONCE, UUID.randomUUID().toString())
                     .claim(Constants.TOKEN, innerJwt.serialize()) //this claim is checked by EDC
                     .claim(Constants.SCOPE, withScopeRequest.getGrantAccess().getScope()).build();
@@ -208,16 +210,15 @@ public class EDCStubServiceImpl implements EDCStubService {
             }
             log.debug("self bpn ->{} and partner bpn ->{}", StringEscapeUtils.escapeJava(selfBpn), StringEscapeUtils.escapeJava(partnerBpn));
 
-            DidDocument partnerDidDocument = didDocumentService.getOrCreateDidDocument(partnerBpn);
 
             //time config
             Date time = new Date();
             Date expiryTime = DateUtils.addMinutes(time, tokenSettings.tokenExpiryTime());
 
             if (withScope) {
-                return createSTSWithScope(withScopeRequest, selfDidDocument, expiryTime, selfBpn, selfKeyPair, partnerDidDocument, partnerBpn);
+                return createSTSWithScope(withScopeRequest, selfDidDocument, expiryTime, selfBpn, selfKeyPair, partnerBpn);
             } else {
-                return createSTSWithoutScope(withAccessTokenRequest, selfDidDocument, expiryTime, selfBpn, selfKeyPair, partnerDidDocument);
+                return createSTSWithoutScope(withAccessTokenRequest, selfDidDocument, expiryTime, selfBpn, selfKeyPair);
             }
         } catch (ParseStubException | IllegalArgumentException | InternalErrorException e) {
             throw e;
