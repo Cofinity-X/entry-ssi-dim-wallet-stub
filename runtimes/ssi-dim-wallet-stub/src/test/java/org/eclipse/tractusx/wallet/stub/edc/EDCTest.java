@@ -268,8 +268,8 @@ class EDCTest {
         Assertions.assertEquals(jwtClaimsSet.getSubject(), consumerDid);
 
         //validate inner token
-        Assertions.assertNotNull(jwtClaimsSet.getStringClaim(Constants.ACCESS_TOKEN));
-        String innerToken = jwtClaimsSet.getStringClaim(Constants.ACCESS_TOKEN);
+        Assertions.assertNotNull(jwtClaimsSet.getStringClaim(Constants.TOKEN));
+        String innerToken = jwtClaimsSet.getStringClaim(Constants.TOKEN);
 
         Assertions.assertEquals(requestedInnerToken, innerToken);
         JWTClaimsSet innerTokenClaim = tokenService.verifyTokenAndGetClaims(innerToken);
@@ -282,6 +282,75 @@ class EDCTest {
         Assertions.assertEquals(Constants.MEMBERSHIP_CREDENTIAL, innerTokenClaim.getStringListClaim(Constants.CREDENTIAL_TYPES).getFirst());
     }
 
+    //CS-4559
+    @SneakyThrows
+    @Test
+    @DisplayName("Create STS token without scope and validate, try to add token which signature verification gets failed")
+    void testCreateStsWithoutScopeWhenInnerTokenValidationFailed() {
+        String consumerBpn = TestUtils.getRandomBpmNumber();
+        String providerBpn = "BPNL000000004OUP";
+        String consumerDid = CommonUtils.getDidWeb(walletStubSettings.didHost(), consumerBpn);
+        String providerDid = CommonUtils.getDidWeb(walletStubSettings.didHost(), providerBpn);
+
+        //Sample inner token which signature verification gets failed
+        String requestedInnerToken = "eyJraWQiOiJ0cmFuc2Zlci1wcm94eS10b2tlbi1zaWduZXItcHVibGljLWtleSIsImFsZyI6IlJTMjU2In0.eyJpc3MiOiJCUE5MMDAwMDAwMDA0T1VQIiwiYXVkIjoiQlBOTDAwMDAwMDAwNE9VUCIsInN1YiI6IkJQTkwwMDAwMDAwMDRPVVAiLCJleHAiOjE3NjMzNzc1MTQsImlhdCI6MTc2MzM3NzIxNCwianRpIjoiYTY1NjNmOWMtZjk2ZC00N2YwLWE3YzAtNmEzNTFjMTcwMTcwIn0.IX_Yr1zsE0tQgFycxotWYG8gGg_7eW9cO9YS4QZJEyvW7ixmUehwukc1_o-1hc9_QKyCwGGctjtRKim4gJCwaYprRfwuNIWj98xMtsBIWPpe9aid8AWnuHp5eOXdgnx78KGAf2Btbu-2y4K8Y3Sug7jL5Kjnf88kahYwzR93np95VhVtkOezMkK5JSIv46D-JtBDQi3nr3FddcidrKogt3BwEMbG7rFlFhFyCedaRW4L8uUzqI3Q7W4oX6NirLRtaDN7WhQZKg4pgNLUEozGMOVSMtEx1ARdW56F8EeAD5K9pulG1Gl4QSq9O9BO-PEOfxzv9991aE8ylsAPxM3ctKuntjGvCRL28wAmZvy0P6tijBJxHbeaw6qDG-syXO45M9-qvx96tQCy2JniPzBjtYctlCJ86lpWHeghaf07IgWXwTcw-17RCzjnAGHj8aLjhiOV2GZCPAA2DfYn3uvU8syNez6nRzgJ8vwpQSpXyoOivfy5klRpB9csFBJesaBGQCJNDzPVcqydE2Kq44o2BzZRTC220hGru0-30fqQ-ORhzgXSybMxUzaN14AW-iaQHyJs4Paw0F_pdXpsfgUX2WIl6pDjqKi-f_DnIFK9G07t7uSa0WapKBcKb3tikQPiGdDdKais_JZJIZ27Hn9mFtdY_LrrOyVvMFNFfb05W3g";
+
+        String stsToken = createStsWithoutScope(consumerDid, providerDid, consumerBpn, requestedInnerToken);
+        //validate STS
+        JWTClaimsSet jwtClaimsSet = tokenService.verifyTokenAndGetClaims(stsToken);
+        Assertions.assertEquals(jwtClaimsSet.getClaim(Constants.BPN).toString(), consumerBpn);
+        Assertions.assertEquals(jwtClaimsSet.getAudience().getFirst(), providerDid);
+        Assertions.assertEquals(jwtClaimsSet.getIssuer(), consumerDid);
+        Assertions.assertEquals(jwtClaimsSet.getSubject(), consumerDid);
+    }
+
+    @SneakyThrows
+    @Test
+    @DisplayName("Test creating STS token without audience claim should fail")
+    void testCreateStsWithoutAudience() {
+        String readScope = "read";
+        String consumerBpn = TestUtils.getRandomBpmNumber();
+        String providerBpn = TestUtils.getRandomBpmNumber();
+        String consumerDid = CommonUtils.getDidWeb(walletStubSettings.didHost(), consumerBpn);
+        String providerDid = CommonUtils.getDidWeb(walletStubSettings.didHost(), providerBpn);
+
+        // Create token without audience
+        JWTClaimsSet tokenWithoutAudience = new JWTClaimsSet.Builder()
+                .issuer(consumerDid)
+                .subject(consumerDid)
+                .issueTime(Date.from(Instant.now()))
+                .claim(Constants.CREDENTIAL_TYPES, List.of(Constants.MEMBERSHIP_CREDENTIAL))
+                .claim(Constants.SCOPE, readScope)
+                .claim(CONSUMER_DID, consumerDid)
+                .claim(PROVIDER_DID, providerDid)
+                .claim(Constants.BPN, consumerBpn)
+                .build();
+
+        String tokenWithoutAudienceStr = CommonUtils.signedJWT(tokenWithoutAudience,
+                        keyService.getKeyPair(consumerBpn),
+                        didDocumentService.getOrCreateDidDocument(consumerBpn).getVerificationMethod().getFirst().getId())
+                .serialize();
+
+        // Attempt to create STS without audience should fail
+        HttpHeaders headers = new HttpHeaders();
+        headers.add(HttpHeaders.AUTHORIZATION, TestUtils.createAOauthToken(consumerBpn, restTemplate, tokenService, tokenSettings));
+
+        CreateCredentialWithoutScopeRequest request = CreateCredentialWithoutScopeRequest.builder()
+                .signToken(CreateCredentialWithoutScopeRequest.SignToken.builder()
+                        .audience(consumerDid)
+                        .subject(providerDid)
+                        .issuer(providerDid)
+                        .token(tokenWithoutAudienceStr)
+                        .build())
+                .build();
+
+        HttpEntity<CreateCredentialWithoutScopeRequest> entity = new HttpEntity<>(request, headers);
+
+        ResponseEntity<StsTokeResponse> response = restTemplate.exchange("/api/sts",
+                HttpMethod.POST, entity, StsTokeResponse.class);
+
+        Assertions.assertEquals(HttpStatus.BAD_REQUEST.value(), response.getStatusCode().value());
+    }
 
     @SneakyThrows
     @Test

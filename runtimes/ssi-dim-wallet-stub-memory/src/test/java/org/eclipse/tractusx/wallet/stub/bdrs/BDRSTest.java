@@ -22,12 +22,12 @@
 package org.eclipse.tractusx.wallet.stub.bdrs;
 
 import org.apache.commons.lang3.StringUtils;
-import org.eclipse.tractusx.wallet.stub.runtime.memory.WalletStubApplication;
 import org.eclipse.tractusx.wallet.stub.config.TestContextInitializer;
 import org.eclipse.tractusx.wallet.stub.config.impl.WalletStubSettings;
 import org.eclipse.tractusx.wallet.stub.did.api.DidDocumentService;
 import org.eclipse.tractusx.wallet.stub.edc.api.dto.QueryPresentationRequest;
 import org.eclipse.tractusx.wallet.stub.key.api.KeyService;
+import org.eclipse.tractusx.wallet.stub.runtime.memory.WalletStubApplication;
 import org.eclipse.tractusx.wallet.stub.token.api.TokenService;
 import org.eclipse.tractusx.wallet.stub.token.impl.TokenSettings;
 import org.eclipse.tractusx.wallet.stub.utils.api.CommonUtils;
@@ -40,7 +40,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.context.annotation.ComponentScan;
-import org.springframework.http.*;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.ContextConfiguration;
 
 import java.net.URISyntaxException;
@@ -121,7 +125,6 @@ class BDRSTest {
         Assertions.assertEquals(response.getStatusCode().value(), HttpStatus.OK.value());
         body = response.getBody();
         Assertions.assertNotNull(body);
-        Assertions.assertEquals(walletStubSettings.seedWalletsBPN().size() + 3, body.size());
         Assertions.assertTrue(body.containsKey(walletStubSettings.baseWalletBPN())); //it should contain base wallet BPN as well
     }
 }

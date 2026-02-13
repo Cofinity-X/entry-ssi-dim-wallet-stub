@@ -29,6 +29,7 @@ import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.JWTParser;
 import com.nimbusds.jwt.SignedJWT;
 import lombok.RequiredArgsConstructor;
+import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.DateUtils;
@@ -125,13 +126,13 @@ public class EDCStubServiceImpl implements EDCStubService {
             JWT jwt = JWTParser.parse(accessToken);
             JWTClaimsSet claimsSet = new JWTClaimsSet.Builder()
                     .issuer(selfDidDocument.getId())
+                    .jwtID(UUID.randomUUID().toString())
                     .audience(partnerDid)
                     .subject(selfDidDocument.getId())
                     .expirationTime(expiryTime)
                     .claim(Constants.BPN, selfBpn)
                     .claim(Constants.NONCE, jwt.getJWTClaimsSet().getStringClaim(Constants.NONCE))
-                    .claim(Constants.ACCESS_TOKEN, accessToken).build();
-
+                    .claim(Constants.TOKEN, accessToken).build();
             SignedJWT signedJWT = CommonUtils.signedJWT(claimsSet, selfKeyPair, selfDidDocument.getVerificationMethod().getFirst().getId());
             String serialize = signedJWT.serialize();
             log.debug("Token created with access_token -> {}", serialize);
@@ -199,7 +200,11 @@ public class EDCStubServiceImpl implements EDCStubService {
             if (request.containsKey(Constants.SIGN_TOKEN) && request.get(Constants.SIGN_TOKEN) != null) {
                 log.debug("Request with access token");
                 withAccessTokenRequest = objectMapper.convertValue(request, CreateCredentialWithoutScopeRequest.class);
-                partnerBpn = CommonUtils.getBpnFromDid(CommonUtils.getAudienceFromToken(withAccessTokenRequest.getSignToken().getToken(), tokenService));
+                partnerBpn = extractPartnerBpn(withAccessTokenRequest);
+                if (StringUtils.isEmpty(partnerBpn)) {
+                    throw new IllegalArgumentException("Partner BPN cannot be null or empty");
+                }
+
             } else if (request.containsKey(Constants.GRANT_ACCESS) && request.get(Constants.GRANT_ACCESS) != null) {
                 log.debug("Request with grantAccess ie. with scope");
                 withScope = true;
@@ -223,6 +228,7 @@ public class EDCStubServiceImpl implements EDCStubService {
         } catch (ParseStubException | IllegalArgumentException | InternalErrorException e) {
             throw e;
         } catch (Exception e) {
+            log.error("Internal Error while creating STS token", e);
             throw new InternalErrorException("Internal Error: " + e.getMessage());
         }
     }
@@ -299,7 +305,26 @@ public class EDCStubServiceImpl implements EDCStubService {
         } catch (IllegalArgumentException | InternalErrorException | ParseStubException e) {
             throw e;
         } catch (Exception e) {
+            log.error("Internal Error while querying presentations", e);
             throw new InternalErrorException("Internal Error: " + e.getMessage());
+        }
+    }
+
+    @SneakyThrows
+    private String extractPartnerBpn(CreateCredentialWithoutScopeRequest withAccessTokenRequest) {
+        try {
+            //try first with verification
+            return CommonUtils.getBpnFromDid(CommonUtils.getAudienceFromToken(withAccessTokenRequest.getSignToken().getToken(), tokenService));
+        } catch (Exception e) {
+            log.debug("Token verification failed, extracting audience without verification with error {}", e.getMessage());
+            //fallback to getting audience without verification
+            String innerToken = CommonUtils.cleanToken(withAccessTokenRequest.getSignToken().getToken());
+            JWT jwt = JWTParser.parse(innerToken);
+            List<String> audience = jwt.getJWTClaimsSet().getAudience();
+            if (audience == null || audience.isEmpty()) {
+                throw new IllegalArgumentException("No audience found in token");
+            }
+            return CommonUtils.getBpnFromDid(audience.getFirst());
         }
     }
 }
