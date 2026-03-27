@@ -27,8 +27,10 @@ import org.eclipse.tractusx.wallet.stub.portal.impl.PortalSettings;
 import org.eclipse.tractusx.wallet.stub.token.impl.TokenSettings;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.cloud.openfeign.EnableFeignClients;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.client.RestTemplate;
 
 @Configuration
 @EnableConfigurationProperties({
@@ -52,4 +54,9 @@ import org.springframework.context.annotation.Configuration;
 })
 @EnableFeignClients(basePackageClasses = PortalClient.class)
 public class WalletStubImplConfig {
+
+    @Bean
+    public RestTemplate restTemplate() {
+        return new RestTemplate();
+    }
 }

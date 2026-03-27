@@ -69,7 +69,16 @@ public class DidDocumentServiceImpl implements DidDocumentService {
                 return optionalDidDocument.get();
             }
 
-            return createDidDocument(bpn);
+            try {
+                return createDidDocument(bpn);
+            } catch (Exception e) {
+                // Handle race condition: another thread may have created the document concurrently
+                Optional<DidDocument> existing = storage.getDidDocument(bpn);
+                if (existing.isPresent()) {
+                    return existing.get();
+                }
+                throw e;
+            }
         } catch (InternalErrorException e) {
             throw e;
         } catch (Exception e) {
@@ -107,9 +116,10 @@ public class DidDocumentServiceImpl implements DidDocumentService {
         DidDocument didDocument = DidDocument.Builder.newInstance()
                 .id(did)
                 .service(List.of(credentialService, issuerService))
-                //We need to change once we have separate keys for authentication and assertion
+                //We need to change once we have separate keys for authentication, assertion and capabilityInvocation
                 .authentication(List.of(verificationMethod.getId()))
                 .assertionMethod(List.of(verificationMethod.getId()))
+                .capabilityInvocation(List.of(verificationMethod.getId()))
                 .verificationMethod(List.of(verificationMethod))
                 .context(walletStubSettings.didDocumentContextUrls().stream().map(URL::toString).toList())
                 .build();

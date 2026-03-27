@@ -33,6 +33,7 @@ import org.eclipse.edc.iam.did.spi.document.VerificationMethod;
 import java.util.ArrayList;
 import java.util.List;
 
+
 /**
  * When a DID URL gets resolved from ION, this object represents the JSON that is returned.
  */
@@ -49,8 +50,9 @@ public class DidDocument {
 
     //ref: https://www.w3.org/TR/did-1.0/#capability-invocation
     //ref: https://www.w3.org/TR/did-1.0/#key-agreement
-    private final List<VerificationMethod> keyAgreement = new ArrayList<>();
-    private final List<VerificationMethod> capabilityInvocation = new ArrayList<>();
+    // Per DID spec, these may be string references (DID URLs) rather than embedded objects
+    private final List<String> keyAgreement = new ArrayList<>();
+    private final List<String> capabilityInvocation = new ArrayList<>();
 
     private String id;
 
@@ -102,12 +104,12 @@ public class DidDocument {
             return this;
         }
 
-        public Builder keyAgreement(List<VerificationMethod> keyAgreement) {
+        public Builder keyAgreement(List<String> keyAgreement) {
             document.keyAgreement.addAll(keyAgreement);
             return this;
         }
 
-        public Builder capabilityInvocation(List<VerificationMethod> capabilityInvocation) {
+        public Builder capabilityInvocation(List<String> capabilityInvocation) {
             document.capabilityInvocation.addAll(capabilityInvocation);
             return this;
         }

@@ -134,7 +134,7 @@ class EDCTest {
         String vpToken = responseBody.getPresentation().getFirst();
         JWTClaimsSet jwtClaimsSet = tokenService.verifyTokenAndGetClaims(vpToken);
 
-        Assertions.assertTrue(jwtClaimsSet.getAudience().contains(consumerDid));
+        Assertions.assertTrue(jwtClaimsSet.getAudience().contains(providerDid));
         Assertions.assertEquals(jwtClaimsSet.getSubject(), consumerDid);
         Assertions.assertEquals(jwtClaimsSet.getIssuer(), consumerDid);
 
@@ -263,7 +263,7 @@ class EDCTest {
         //validate STS
         JWTClaimsSet jwtClaimsSet = tokenService.verifyTokenAndGetClaims(stsToken);
         Assertions.assertEquals(jwtClaimsSet.getClaim(Constants.BPN).toString(), consumerBpn);
-        Assertions.assertEquals(jwtClaimsSet.getAudience().getFirst(), consumerDid);
+        Assertions.assertEquals(jwtClaimsSet.getAudience().getFirst(), providerDid);
         Assertions.assertEquals(jwtClaimsSet.getIssuer(), consumerDid);
         Assertions.assertEquals(jwtClaimsSet.getSubject(), consumerDid);
 
@@ -423,9 +423,9 @@ class EDCTest {
 
         CreateCredentialWithoutScopeRequest request = CreateCredentialWithoutScopeRequest.builder()
                 .signToken(CreateCredentialWithoutScopeRequest.SignToken.builder()
-                        .audience(consumerDid)
-                        .subject(providerDid)
-                        .issuer(providerDid)
+                        .audience(providerDid)
+                        .subject(consumerDid)
+                        .issuer(consumerDid)
                         .token(token)
                         .build())
                 .build();

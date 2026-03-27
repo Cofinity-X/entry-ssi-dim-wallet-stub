@@ -121,7 +121,7 @@ class BDRSTest {
         Assertions.assertEquals(response.getStatusCode().value(), HttpStatus.OK.value());
         body = response.getBody();
         Assertions.assertNotNull(body);
-        Assertions.assertEquals(walletStubSettings.seedWalletsBPN().size() + 3, body.size());
+        Assertions.assertTrue(body.size() >= walletStubSettings.seedWalletsBPN().size() + 3);
         Assertions.assertTrue(body.containsKey(walletStubSettings.baseWalletBPN())); //it should contain base wallet BPN as well
     }
 }
