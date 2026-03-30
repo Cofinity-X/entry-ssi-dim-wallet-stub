@@ -129,8 +129,9 @@ class DidDocumentServiceTest {
 
         //verify keyAgreement and capabilityInvocation are empty
         Assertions.assertTrue(didDocument.getKeyAgreement().isEmpty(), "Key Agreement should be empty");
-        Assertions.assertTrue(didDocument.getCapabilityInvocation().isEmpty(), "Capability Invocation should be empty");
 
+        //verify that capabilityInvocation exists
+        Assertions.assertEquals(didDocument.getCapabilityInvocation().getFirst(), didDocument.getVerificationMethod().getFirst().getId());
     }
 
 

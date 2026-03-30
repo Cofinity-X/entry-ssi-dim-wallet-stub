@@ -25,7 +25,6 @@ package org.eclipse.tractusx.wallet.stub.storage.postgresql;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.eclipse.tractusx.wallet.stub.dao.postgresql.entity.CustomCredentialEntity;
 import org.eclipse.tractusx.wallet.stub.dao.postgresql.entity.DidDocumentEntity;
@@ -40,12 +39,9 @@ import org.eclipse.tractusx.wallet.stub.dao.postgresql.repository.HolderCredenti
 import org.eclipse.tractusx.wallet.stub.dao.postgresql.repository.JWTCredentialRepository;
 import org.eclipse.tractusx.wallet.stub.dao.postgresql.repository.KeyPairRepository;
 import org.eclipse.tractusx.wallet.stub.did.api.DidDocument;
-import org.eclipse.tractusx.wallet.stub.utils.api.CommonUtils;
-import org.eclipse.tractusx.wallet.stub.utils.api.Constants;
 import org.eclipse.tractusx.wallet.stub.utils.api.CustomCredential;
 import org.eclipse.tractusx.wallet.stub.storage.api.Storage;
 import org.springframework.stereotype.Service;
-import org.springframework.util.CollectionUtils;
 
 import java.security.KeyFactory;
 import java.security.KeyPair;
@@ -159,8 +155,12 @@ public class DatabaseStorage implements Storage {
 
     @Override
     public void saveDidDocument(String bpn, DidDocument didDocument) {
-        didDocumentRepository.save(new DidDocumentEntity(bpn, didDocument));
-
+        try {
+            didDocumentRepository.save(new DidDocumentEntity(bpn, didDocument));
+        } catch (Exception e) {
+            // Ignore duplicate key violations — another thread already saved the document
+            log.debug("DID document for bpn {} already exists, skipping save: {}", bpn, e.getMessage());
+        }
     }
 
     @Override

@@ -46,6 +46,7 @@ public class TestContextInitializer implements ApplicationContextInitializer<Con
         TestPropertyValues.of(
                 "server.port=" + PORT,
                 "stub.portal.portalWaitTime=1",
+                "stub.stubUrl=http://localhost:" + PORT,
                 "management.server.port=" + MANAGEMENT_PORT
         ).applyTo(applicationContext.getEnvironment());
     }

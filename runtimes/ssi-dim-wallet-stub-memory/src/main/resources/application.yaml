@@ -69,7 +69,7 @@ stub:
   seedWalletsBPN: ${SEED_WALLETS_BPN:BPNL00000003AZQP,BPNL00000003AYRE}
   baseWalletBPN: ${BASE_WALLET_BPN:BPNL000000000000} # Operator BPN
   didHost: ${DID_HOST:localhost}
-  stubUrl: ${STUB_URL:https://localhost} #Stub application host
+  stubUrl: ${STUB_URL:http://localhost:8080} #Stub application host
   statusListVcId: ${STATUS_LIST_VC_ID:8a6c7486-1e1f-4555-bdd2-1a178182651e}
   didDocumentContextUrls: ${DID_DOCUMENT_CONTEXT_URLS:https://www.w3.org/ns/did/v1, https://w3id.org/security/suites/jws-2020/v1, https://w3id.org/dspace-dcp/v1.0/dcp.jsonld, https://w3id.org/dspace/2025/1/context.jsonld}
   issuerMetadataContextUrls: ${ISSUER_METADATA_CONTEXT_URLS:https://w3id.org/dspace-dcp/v1.0/dcp.jsonld, https://www.w3.org/2018/credentials/v1, https://w3id.org/catenax/credentials/v1.0.0}

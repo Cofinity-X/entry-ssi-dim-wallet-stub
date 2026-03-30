@@ -33,8 +33,11 @@ import com.nimbusds.jwt.SignedJWT;
 import lombok.SneakyThrows;
 import org.apache.commons.lang3.time.DateUtils;
 import org.eclipse.edc.iam.did.spi.document.VerificationMethod;
+import org.eclipse.edc.security.token.jwt.CryptoConverter;
+import org.eclipse.tractusx.wallet.stub.config.impl.WalletStubSettings;
 import org.eclipse.tractusx.wallet.stub.did.api.DidDocument;
 import org.eclipse.tractusx.wallet.stub.did.api.DidDocumentService;
+import org.eclipse.tractusx.wallet.stub.exception.api.InternalErrorException;
 import org.eclipse.tractusx.wallet.stub.exception.api.MalformedCredentialsException;
 import org.eclipse.tractusx.wallet.stub.key.api.KeyService;
 import org.eclipse.tractusx.wallet.stub.storage.api.Storage;
@@ -42,19 +45,20 @@ import org.eclipse.tractusx.wallet.stub.token.api.TokenService;
 import org.eclipse.tractusx.wallet.stub.token.api.dto.TokenRequest;
 import org.eclipse.tractusx.wallet.stub.token.api.dto.TokenResponse;
 import org.eclipse.tractusx.wallet.stub.token.impl.TokenSettings;
-import org.eclipse.tractusx.wallet.stub.utils.api.Constants;
 import org.eclipse.tractusx.wallet.stub.utils.api.CommonUtils;
+import org.eclipse.tractusx.wallet.stub.utils.api.Constants;
 import org.eclipse.tractusx.wallet.stub.utils.impl.DeterministicECKeyPairGenerator;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.web.client.RestTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.interfaces.ECPrivateKey;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Date;
 import java.util.List;
@@ -65,7 +69,8 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.anyString;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest
@@ -83,95 +88,326 @@ class TokenServiceTest {
     @MockitoBean
     private Storage storage;
 
+    @MockitoBean
+    private RestTemplate restTemplate;
+
+    @MockitoBean
+    private WalletStubSettings walletStubSettings;
+
     @Autowired
     private TokenService tokenService;
 
-    @Test
-    void verifyTokenAndGetClaimsTest_throwIllegalArgumentException() throws Exception {
-        KeyPair keypairTest = DeterministicECKeyPairGenerator.createKeyPair("1","test");
+    @BeforeEach
+    void setUp() {
+        // DID host won't match test DIDs (which use "example.com"), so https:// path is always taken
+        when(walletStubSettings.didHost()).thenReturn("unmatched.host");
+    }
 
-        when(keyService.getKeyPair(anyString())).thenReturn(keypairTest);
-        when(keyService.getKeyPair(null)).thenReturn(DeterministicECKeyPairGenerator.createKeyPair("12","test2"));
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
 
-        DidDocument didDocument = DidDocument.Builder.newInstance()
-                .id("1")
-                .verificationMethod(List.of(VerificationMethod.Builder.newInstance()
-                        .id("1" + "#key-1")
-                        .controller("1")
-                        .type("JsonWebKey2020")
-                        .publicKeyJwk(Map.of(
-                                "kty", "EC",
-                                "crv", "secp256k1",
-                                "use", "sig",
-                                "kid", "key-1",
-                                "alg", "ES256K"
-                        ))
-                        .build()))
+    /**
+     * Builds a real DID document whose publicKeyJwk is derived from the given key pair.
+     */
+    @SneakyThrows
+    private DidDocument buildDidDocument(String did, String keyId, KeyPair keyPair) {
+        Map<String, Object> jwkMap = CryptoConverter.createJwk(keyPair).toPublicJWK().toJSONObject();
+        VerificationMethod vm = VerificationMethod.Builder.newInstance()
+                .id(did + Constants.HASH_SEPARATOR + keyId)
+                .controller(did)
+                .type(Constants.JSON_WEB_KEY_2020)
+                .publicKeyJwk(jwkMap)
                 .build();
-        when(didDocumentService.getOrCreateDidDocument(anyString())).thenReturn(didDocument);
-
-        JWTClaimsSet claimsSet = new JWTClaimsSet.Builder()
-                .issuer("consumerDid")
-                .audience("consumerDid")
-                .subject("consumerDid")
-                .issueTime(Date.from(Instant.now()))
-                .claim(Constants.CREDENTIAL_TYPES, new ArrayList<>())
-                .claim(Constants.SCOPE, "scope")
-                .claim(Constants.CONSUMER_DID, "consumerDid")
-                .claim(Constants.PROVIDER_DID, "providerDid")
-                .claim(Constants.BPN, "consumerBpn")
+        return DidDocument.Builder.newInstance()
+                .id(did)
+                .verificationMethod(List.of(vm))
                 .build();
-        // Create a JWS header with the specified algorithm, type, and key ID
+    }
+
+    /**
+     * Transforms {@code did:web:host:path} → {@code https://host/path/did.json}
+     * (mirrors the logic in TokenServiceImpl so we can set up the mock correctly).
+     */
+    private String didToUrl(String did) {
+        String withoutScheme = did.substring("did:web:".length());
+        String[] parts = withoutScheme.split(":");
+        StringBuilder path = new StringBuilder();
+        for (int i = 1; i < parts.length; i++) {
+            path.append("/").append(parts[i]);
+        }
+        return "https://" + parts[0] + path + "/did.json";
+    }
+
+    @SneakyThrows
+    private SignedJWT createSignedJWT(JWTClaimsSet claimsSet, KeyPair keyPair, String keyId) {
         JWSHeader header = new JWSHeader.Builder(JWSAlgorithm.ES256K)
                 .type(JOSEObjectType.JWT)
-                .keyID("1")
+                .keyID(keyId)
                 .build();
-
-        // Create a new signed JWT with the header and claims set
         SignedJWT signedJWT = new SignedJWT(header, claimsSet);
-
-        // Create an ECDSASigner using the private key from the key pair
-        JWSSigner signer = new ECDSASigner((ECPrivateKey) keypairTest.getPrivate());
-
-        // Set the Bouncy Castle provider for the signer
+        JWSSigner signer = new ECDSASigner((ECPrivateKey) keyPair.getPrivate());
         signer.getJCAContext().setProvider(BouncyCastleProviderSingleton.getInstance());
-
-        // Sign the JWT using the signer
         signedJWT.sign(signer);
-        String token = signedJWT.serialize();
-        assertThrows(IllegalArgumentException.class, () -> {
-            tokenService.verifyTokenAndGetClaims(token);
-        });
+        return signedJWT;
+    }
+
+    // -------------------------------------------------------------------------
+    // verifyTokenAndGetClaims — happy path
+    // -------------------------------------------------------------------------
+
+    @Test
+    void verifyToken_resolvesDidFromIssuerClaim_andVerifiesSignature() {
+        String did = "did:web:example.com:BPNL000000000001";
+        String keyId = UUID.randomUUID().toString();
+        String fullKeyId = did + "#" + keyId;
+        KeyPair keyPair = DeterministicECKeyPairGenerator.createKeyPair("BPNL000000000001", "test");
+
+        DidDocument didDocument = buildDidDocument(did, keyId, keyPair);
+
+        // JWT whose iss = did, kid = fullKeyId
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .issuer(did)
+                .subject(did)
+                .audience(did)
+                .issueTime(Date.from(Instant.now()))
+                .claim(Constants.BPN, "BPNL000000000001")
+                .build();
+        SignedJWT signedJWT = createSignedJWT(claims, keyPair, fullKeyId);
+
+        when(restTemplate.getForObject(eq(didToUrl(did)), eq(DidDocument.class)))
+                .thenReturn(didDocument);
+
+        JWTClaimsSet result = tokenService.verifyTokenAndGetClaims(signedJWT.serialize());
+        assertEquals("BPNL000000000001", result.getClaim(Constants.BPN));
     }
 
     @Test
-    void createAccessTokenResponse_returnTokenResponse() {
+    void verifyToken_kidSelectsCorrectVerificationMethod_whenMultipleExist() {
+        String did = "did:web:example.com:BPNL000000000002";
+        String keyId1 = "key-1";
+        String keyId2 = "key-2";
+        KeyPair keyPair1 = DeterministicECKeyPairGenerator.createKeyPair("BPNL000000000002", "env1");
+        KeyPair keyPair2 = DeterministicECKeyPairGenerator.createKeyPair("BPNL000000000002", "env2");
+
+        // Build DID document with two verification methods
+        Map<String, Object> jwk1 = CryptoConverter.createJwk(keyPair1).toPublicJWK().toJSONObject();
+        Map<String, Object> jwk2 = CryptoConverter.createJwk(keyPair2).toPublicJWK().toJSONObject();
+
+        VerificationMethod vm1 = VerificationMethod.Builder.newInstance()
+                .id(did + "#" + keyId1).controller(did).type(Constants.JSON_WEB_KEY_2020)
+                .publicKeyJwk(jwk1).build();
+        VerificationMethod vm2 = VerificationMethod.Builder.newInstance()
+                .id(did + "#" + keyId2).controller(did).type(Constants.JSON_WEB_KEY_2020)
+                .publicKeyJwk(jwk2).build();
+
         DidDocument didDocument = DidDocument.Builder.newInstance()
-                .id("1")
-                .context(List.of("https://www.w3.org/ns/did/v1"))
-                .verificationMethod(List.of(VerificationMethod.Builder.newInstance()
-                        .id("1" + "#key-1")
-                        .controller("1")
-                        .type("JsonWebKey2020")
-                        .publicKeyJwk(Map.of(
-                                "kty", "EC",
-                                "crv", "secp256k1",
-                                "use", "sig",
-                                "kid", "key-1",
-                                "alg", "ES256K"
-                        ))
-                        .build()))
+                .id(did).verificationMethod(List.of(vm1, vm2)).build();
+
+        // Sign with keyPair2 but reference keyId2 — verifier must pick vm2
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .issuer(did).subject(did)
+                .issueTime(Date.from(Instant.now()))
                 .build();
-        KeyPair testKeyPair = DeterministicECKeyPairGenerator.createKeyPair("testbpm", "testenv");
+        SignedJWT signedJWT = createSignedJWT(claims, keyPair2, did + "#" + keyId2);
+
+        when(restTemplate.getForObject(eq(didToUrl(did)), eq(DidDocument.class)))
+                .thenReturn(didDocument);
+
+        // Should not throw
+        JWTClaimsSet result = tokenService.verifyTokenAndGetClaims(signedJWT.serialize());
+        assertEquals(did, result.getIssuer());
+    }
+
+    // -------------------------------------------------------------------------
+    // verifyTokenAndGetClaims — failure paths
+    // -------------------------------------------------------------------------
+
+    @Test
+    void verifyToken_wrongKey_throwsIllegalArgumentException() {
+        String did = "did:web:example.com:BPNL000000000003";
+        String keyId = "key-1";
+        // Sign with keyPair1, but publish keyPair2 in the DID document
+        KeyPair signingKeyPair = DeterministicECKeyPairGenerator.createKeyPair("BPNL000000000003", "signer");
+        KeyPair publishedKeyPair = DeterministicECKeyPairGenerator.createKeyPair("BPNL000000000003", "published");
+
+        DidDocument didDocument = buildDidDocument(did, keyId, publishedKeyPair);
+
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .issuer(did)
+                .issueTime(Date.from(Instant.now()))
+                .build();
+        SignedJWT signedJWT = createSignedJWT(claims, signingKeyPair, did + "#" + keyId);
+
+        when(restTemplate.getForObject(eq(didToUrl(did)), eq(DidDocument.class)))
+                .thenReturn(didDocument);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> tokenService.verifyTokenAndGetClaims(signedJWT.serialize()));
+    }
+
+    @Test
+    void verifyToken_kidNotFoundInDidDocument_throwsInternalErrorException() {
+        String did = "did:web:example.com:BPNL000000000004";
+        KeyPair keyPair = DeterministicECKeyPairGenerator.createKeyPair("BPNL000000000004", "test");
+
+        // DID document has "key-1", but JWT references "key-2"
+        DidDocument didDocument = buildDidDocument(did, "key-1", keyPair);
+
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .issuer(did)
+                .issueTime(Date.from(Instant.now()))
+                .build();
+        SignedJWT signedJWT = createSignedJWT(claims, keyPair, did + "#key-2");
+
+        when(restTemplate.getForObject(eq(didToUrl(did)), eq(DidDocument.class)))
+                .thenReturn(didDocument);
+
+        assertThrows(InternalErrorException.class,
+                () -> tokenService.verifyTokenAndGetClaims(signedJWT.serialize()));
+    }
+
+    @Test
+    void verifyToken_didDocumentResolutionFails_throwsInternalErrorException() {
+        String did = "did:web:unreachable.example:BPNL000000000005";
+        KeyPair keyPair = DeterministicECKeyPairGenerator.createKeyPair("BPNL000000000005", "test");
+
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .issuer(did)
+                .issueTime(Date.from(Instant.now()))
+                .build();
+        SignedJWT signedJWT = createSignedJWT(claims, keyPair, did + "#key-1");
+
+        when(restTemplate.getForObject(anyString(), eq(DidDocument.class)))
+                .thenReturn(null);
+
+        assertThrows(InternalErrorException.class,
+                () -> tokenService.verifyTokenAndGetClaims(signedJWT.serialize()));
+    }
+
+    @Test
+    void verifyToken_nonDidWebIssuer_throwsInternalErrorException() {
+        KeyPair keyPair = DeterministicECKeyPairGenerator.createKeyPair("BPNL000000000006", "test");
+
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .issuer("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK")
+                .issueTime(Date.from(Instant.now()))
+                .build();
+        SignedJWT signedJWT = createSignedJWT(claims, keyPair, "did:key:z6Mk#key-1");
+
+        assertThrows(InternalErrorException.class,
+                () -> tokenService.verifyTokenAndGetClaims(signedJWT.serialize()));
+    }
+
+    @Test
+    void verifyToken_noIssuerClaim_throwsInternalErrorException() {
+        KeyPair keyPair = DeterministicECKeyPairGenerator.createKeyPair("BPNL000000000007", "test");
+
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .subject("some-subject")
+                .issueTime(Date.from(Instant.now()))
+                .build();
+        SignedJWT signedJWT = createSignedJWT(claims, keyPair, "did:web:example.com:BPNL000000000007#key-1");
+
+        assertThrows(InternalErrorException.class,
+                () -> tokenService.verifyTokenAndGetClaims(signedJWT.serialize()));
+    }
+
+    // -------------------------------------------------------------------------
+    // DID-to-URL transformation
+    // -------------------------------------------------------------------------
+
+    @Test
+    void verifyToken_didUrlTransformation_singlePathSegment() {
+        // did:web:example.com:BPNL123 → https://example.com/BPNL123/did.json
+        String did = "did:web:example.com:BPNL123";
+        String expectedUrl = "https://example.com/BPNL123/did.json";
+        KeyPair keyPair = DeterministicECKeyPairGenerator.createKeyPair("BPNL123", "test");
+        DidDocument didDocument = buildDidDocument(did, "key-1", keyPair);
+
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .issuer(did)
+                .issueTime(Date.from(Instant.now()))
+                .build();
+        SignedJWT signedJWT = createSignedJWT(claims, keyPair, did + "#key-1");
+
+        when(restTemplate.getForObject(eq(expectedUrl), eq(DidDocument.class)))
+                .thenReturn(didDocument);
+
+        // Verifies the correct URL was derived (mock only responds to the exact expected URL)
+        JWTClaimsSet result = tokenService.verifyTokenAndGetClaims(signedJWT.serialize());
+        assertEquals(did, result.getIssuer());
+    }
+
+    @Test
+    void verifyToken_didUrlTransformation_multiplePathSegments() {
+        // did:web:example.com:dept:BPNL123 → https://example.com/dept/BPNL123/did.json
+        String did = "did:web:example.com:dept:BPNL123";
+        String expectedUrl = "https://example.com/dept/BPNL123/did.json";
+        KeyPair keyPair = DeterministicECKeyPairGenerator.createKeyPair("BPNL123", "test");
+        DidDocument didDocument = buildDidDocument(did, "key-1", keyPair);
+
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .issuer(did)
+                .issueTime(Date.from(Instant.now()))
+                .build();
+        SignedJWT signedJWT = createSignedJWT(claims, keyPair, did + "#key-1");
+
+        when(restTemplate.getForObject(eq(expectedUrl), eq(DidDocument.class)))
+                .thenReturn(didDocument);
+
+        JWTClaimsSet result = tokenService.verifyTokenAndGetClaims(signedJWT.serialize());
+        assertEquals(did, result.getIssuer());
+    }
+
+    // -------------------------------------------------------------------------
+    // getBpnFromToken
+    // -------------------------------------------------------------------------
+
+    @Test
+    void getBpnFromToken_shouldExtractBpn() {
+        String did = "did:web:example.com:BPNL00000001CRHK";
+        String expectedBpn = "BPNL00000001CRHK";
+        KeyPair keyPair = DeterministicECKeyPairGenerator.createKeyPair("BPNL00000001CRHK", "test");
+        String keyId = "key-1";
+        DidDocument didDocument = buildDidDocument(did, keyId, keyPair);
+
+        when(restTemplate.getForObject(eq(didToUrl(did)), eq(DidDocument.class)))
+                .thenReturn(didDocument);
+
+        List.of(Constants.BPN, Constants.CAPITAL_BPN).forEach(bpnKeyName -> {
+            JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                    .issuer(did)
+                    .claim(bpnKeyName, expectedBpn)
+                    .build();
+            SignedJWT signedJWT = createSignedJWT(claims, keyPair, did + "#" + keyId);
+
+            Optional<String> result = tokenService.getBpnFromToken(signedJWT.serialize());
+
+            assertTrue(result.isPresent());
+            assertEquals(expectedBpn, result.get());
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // createAccessTokenResponse
+    // -------------------------------------------------------------------------
+
+    @Test
+    void createAccessTokenResponse_returnTokenResponse() {
+        String did = "did:web:example.com:testbpn";
+        String keyId = "key-1";
+        KeyPair testKeyPair = DeterministicECKeyPairGenerator.createKeyPair("testbpn", "testenv");
+
+        DidDocument didDocument = buildDidDocument(did, keyId, testKeyPair);
 
         when(keyService.getKeyPair(anyString())).thenReturn(testKeyPair);
         when(didDocumentService.getOrCreateDidDocument(anyString())).thenReturn(didDocument);
         when(tokenSettings.tokenExpiryTime()).thenReturn(60);
 
-        //time config
+        // Construct the expected header (first part of JWT) to assert equality
         Date time = new Date();
         Date expiryTime = DateUtils.addMinutes(time, 60);
-        //claims
         JWTClaimsSet body = new JWTClaimsSet.Builder()
                 .issueTime(time)
                 .jwtID(UUID.randomUUID().toString())
@@ -182,25 +418,28 @@ class TokenServiceTest {
                 .notBeforeTime(time)
                 .subject(didDocument.getId())
                 .build();
-        SignedJWT signedJWT = CommonUtils.signedJWT(body, testKeyPair, didDocument.getVerificationMethod().getFirst().getId());
-        String token = signedJWT.serialize();
+        SignedJWT expectedJWT = CommonUtils.signedJWT(body, testKeyPair,
+                didDocument.getVerificationMethod().getFirst().getId());
 
         TokenRequest tokenRequest = new TokenRequest("client", "secret", "grant");
         TokenResponse tokenResponse = tokenService.createAccessTokenResponse(tokenRequest, didDocument);
 
-        assertEquals(tokenResponse.getAccessToken().split("\\.")[0],
-                token.split("\\.")[0]);
+        // Headers (algorithm + kid) must match
+        assertEquals(expectedJWT.serialize().split("\\.")[0],
+                tokenResponse.getAccessToken().split("\\.")[0]);
     }
+
+    // -------------------------------------------------------------------------
+    // setClientInfo
+    // -------------------------------------------------------------------------
 
     @Test
     void setClientInfoTest_setClientInfo() {
-        String client = "client";
         String testClient = "testClient";
-        TokenRequest tokenRequest = new TokenRequest(client, "secret", "grant");
+        TokenRequest tokenRequest = new TokenRequest("client", "secret", "grant");
         String decodedString = testClient + ":testsecret";
         byte[] encodedBytes = Base64.getEncoder().encode(decodedString.getBytes());
-        String encodedString = new String(encodedBytes, StandardCharsets.UTF_8);
-        String token = "Basic " + encodedString;
+        String token = "Basic " + new String(encodedBytes, StandardCharsets.UTF_8);
 
         tokenService.setClientInfo(tokenRequest, token);
         assertEquals(testClient, tokenRequest.getClientId());
@@ -208,74 +447,23 @@ class TokenServiceTest {
 
     @Test
     void setClientInfoTest_incorrectDecodedStringFormat_throwsMalformedCredentialsException() {
-        String client = "client";
-        String testClient = "testClient";
-        TokenRequest tokenRequest = new TokenRequest(client, "secret", "grant");
-        String decodedString = testClient + "testsecret";
+        TokenRequest tokenRequest = new TokenRequest("client", "secret", "grant");
+        String decodedString = "testClienttestsecret"; // missing colon
         byte[] encodedBytes = Base64.getEncoder().encode(decodedString.getBytes());
-        String encodedString = new String(encodedBytes, StandardCharsets.UTF_8);
-        String token = "Basic " + encodedString;
+        String token = "Basic " + new String(encodedBytes, StandardCharsets.UTF_8);
 
-        assertThrows(MalformedCredentialsException.class, () -> {
-            tokenService.setClientInfo(tokenRequest, token);
-        });
+        assertThrows(MalformedCredentialsException.class,
+                () -> tokenService.setClientInfo(tokenRequest, token));
     }
 
     @Test
     void setClientInfoTest_incorrectHeaderFormat_throwsMalformedCredentialsException() {
-        String client = "client";
-        String testClient = "testClient";
-        TokenRequest tokenRequest = new TokenRequest(client, "secret", "grant");
-        String decodedString = testClient + "testsecret";
+        TokenRequest tokenRequest = new TokenRequest("client", "secret", "grant");
+        String decodedString = "testClient:testsecret";
         byte[] encodedBytes = Base64.getEncoder().encode(decodedString.getBytes());
-        String encodedString = new String(encodedBytes, StandardCharsets.UTF_8);
-        String token = "Basicfail " + encodedString;
+        String token = "Basicfail " + new String(encodedBytes, StandardCharsets.UTF_8);
 
-        assertThrows(MalformedCredentialsException.class, () -> {
-            tokenService.setClientInfo(tokenRequest, token);
-        });
-    }
-
-    @Test
-    void getBpnFromToken_shouldExtractBpn(){
-        // Arrange
-        String expectedBpn = "BPNL00000001CRHK";
-        KeyPair keyPair = DeterministicECKeyPairGenerator.createKeyPair("test", "test");
-
-        // Create signed JWT with BPN claim
-        List.of(Constants.BPN, Constants.CAPITAL_BPN).forEach(bpnKeyName->{
-            JWTClaimsSet claimsSet = new JWTClaimsSet.Builder()
-                    .claim(bpnKeyName, expectedBpn)
-                    .build();
-            SignedJWT signedJWT = createSignedJWT(claimsSet, keyPair, "did:web:localhost:BPNL00000001CRHK#key-1");
-
-            // Mock dependencies
-            when(keyService.getKeyPair(anyString())).thenReturn(keyPair);
-
-            // Act
-            Optional<String> result = tokenService.getBpnFromToken(signedJWT.serialize());
-
-            // Assert
-            assertTrue(result.isPresent());
-            assertEquals(expectedBpn, result.get());
-        });
-
-    }
-
-
-    // Helper method to create signed JWT
-    @SneakyThrows
-    private SignedJWT createSignedJWT(JWTClaimsSet claimsSet, KeyPair keyPair, String keyId) {
-        JWSHeader header = new JWSHeader.Builder(JWSAlgorithm.ES256K)
-                .type(JOSEObjectType.JWT)
-                .keyID(keyId)
-                .build();
-
-        SignedJWT signedJWT = new SignedJWT(header, claimsSet);
-        JWSSigner signer = new ECDSASigner((ECPrivateKey) keyPair.getPrivate());
-        signer.getJCAContext().setProvider(BouncyCastleProviderSingleton.getInstance());
-        signedJWT.sign(signer);
-
-        return signedJWT;
+        assertThrows(MalformedCredentialsException.class,
+                () -> tokenService.setClientInfo(tokenRequest, token));
     }
 }

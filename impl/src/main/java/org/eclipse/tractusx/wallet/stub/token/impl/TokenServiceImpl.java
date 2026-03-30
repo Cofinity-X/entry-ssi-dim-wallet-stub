@@ -24,6 +24,7 @@ package org.eclipse.tractusx.wallet.stub.token.impl;
 
 import com.nimbusds.jose.crypto.ECDSAVerifier;
 import com.nimbusds.jose.crypto.bc.BouncyCastleProviderSingleton;
+import com.nimbusds.jose.jwk.ECKey;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
 import lombok.RequiredArgsConstructor;
@@ -32,6 +33,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.DateUtils;
 import org.apache.commons.text.StringEscapeUtils;
+import org.eclipse.edc.iam.did.spi.document.VerificationMethod;
+import org.eclipse.tractusx.wallet.stub.config.impl.WalletStubSettings;
 import org.eclipse.tractusx.wallet.stub.did.api.DidDocument;
 import org.eclipse.tractusx.wallet.stub.exception.api.InternalErrorException;
 import org.eclipse.tractusx.wallet.stub.exception.api.MalformedCredentialsException;
@@ -43,13 +46,14 @@ import org.eclipse.tractusx.wallet.stub.token.api.dto.TokenResponse;
 import org.eclipse.tractusx.wallet.stub.utils.api.CommonUtils;
 import org.eclipse.tractusx.wallet.stub.utils.api.Constants;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
-import java.security.interfaces.ECPublicKey;
 import java.text.ParseException;
 import java.util.Base64;
 import java.util.Date;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -61,6 +65,10 @@ public class TokenServiceImpl implements TokenService {
     private final KeyService keyService;
 
     private final TokenSettings tokenSettings;
+
+    private final RestTemplate restTemplate;
+
+    private final WalletStubSettings walletStubSettings;
 
 
     @SneakyThrows
@@ -163,11 +171,13 @@ public class TokenServiceImpl implements TokenService {
     private boolean verifyToken(String token) {
         try {
             SignedJWT signedJWT = SignedJWT.parse(CommonUtils.cleanToken(token));
-            String keyID = signedJWT.getHeader().getKeyID(); //this will be DID
-            String bpn = CommonUtils.getBpnFromDid(keyID);
-            KeyPair keyPair = keyService.getKeyPair(bpn);
-            ECPublicKey aPublic = (ECPublicKey) keyPair.getPublic();
-            ECDSAVerifier ecdsaVerifier = new ECDSAVerifier(aPublic);
+            String issuer = signedJWT.getJWTClaimsSet().getIssuer();
+            String keyId = signedJWT.getHeader().getKeyID();
+
+            DidDocument didDocument = resolveDidDocument(issuer);
+            ECKey ecKey = extractPublicKey(didDocument, keyId);
+
+            ECDSAVerifier ecdsaVerifier = new ECDSAVerifier(ecKey.toECPublicKey());
             ecdsaVerifier.getJCAContext().setProvider(BouncyCastleProviderSingleton.getInstance());
             return signedJWT.verify(ecdsaVerifier);
         } catch (InternalErrorException e) {
@@ -177,5 +187,63 @@ public class TokenServiceImpl implements TokenService {
         } catch (Exception e) {
             throw new InternalErrorException("Internal Error: " + e.getMessage());
         }
+    }
+
+    /**
+     * Resolves a DID document by transforming the did:web DID into an HTTPS URL and fetching it.
+     * <p>
+     * Transformation: {@code did:web:host:path} → {@code https://host/path/did.json}
+     * <p>
+     * When the DID host matches the configured {@code stub.didHost}, the configured
+     * {@code stub.stubUrl} is used as the base instead, allowing the stub to resolve
+     * its own DID documents over the actual running protocol and port.
+     */
+    private DidDocument resolveDidDocument(String did) {
+        if (did == null || !did.startsWith(Constants.DID_WEB + ":")) {
+            throw new InternalErrorException("Unsupported DID method or null issuer: " + did);
+        }
+        // Strip "did:web:" prefix, then split remaining parts
+        String withoutScheme = did.substring((Constants.DID_WEB + ":").length());
+        String[] parts = withoutScheme.split(":");
+        // First part is the host; remaining parts form the path
+        String host = parts[0];
+        StringBuilder path = new StringBuilder();
+        for (int i = 1; i < parts.length; i++) {
+            path.append("/").append(parts[i]);
+        }
+
+        String base;
+        if (host.equals(walletStubSettings.didHost())) {
+            // Self-resolution: use the stub's own URL so tests and local runs work correctly
+            base = walletStubSettings.stubUrl();
+        } else {
+            base = "https://" + host;
+        }
+
+        String url = base + path + "/did.json";
+        log.debug("Resolving DID document from URL: {}", url);
+        DidDocument didDocument = restTemplate.getForObject(url, DidDocument.class);
+        if (didDocument == null) {
+            throw new InternalErrorException("Failed to resolve DID document from: " + url);
+        }
+        return didDocument;
+    }
+
+    /**
+     * Finds the verification method in the DID document matching the given key ID and extracts
+     * the EC public key from its {@code publicKeyJwk} property.
+     */
+    @SneakyThrows
+    private ECKey extractPublicKey(DidDocument didDocument, String keyId) {
+        VerificationMethod match = didDocument.getVerificationMethod().stream()
+                .filter(vm -> vm.getId().equals(keyId))
+                .findFirst()
+                .orElseThrow(() -> new InternalErrorException(
+                        "No verification method found for kid: " + keyId));
+        Map<String, Object> jwkMap = match.getPublicKeyJwk();
+        if (jwkMap == null || jwkMap.isEmpty()) {
+            throw new InternalErrorException("Verification method has no publicKeyJwk: " + keyId);
+        }
+        return ECKey.parse(jwkMap);
     }
 }
