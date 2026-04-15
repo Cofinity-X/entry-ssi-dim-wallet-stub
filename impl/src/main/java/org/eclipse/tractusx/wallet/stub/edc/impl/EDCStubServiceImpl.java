@@ -238,7 +238,8 @@ public class EDCStubServiceImpl implements EDCStubService {
         try {
             log.debug("getting request for query credential with body-> {} token -> {}", objectMapper.writeValueAsString(request), StringEscapeUtils.escapeJava(token));
             JWTClaimsSet jwtClaimsSet = tokenService.verifyTokenAndGetClaims(token);
-            List<String> audience = jwtClaimsSet.getAudience();
+
+            List<String> audience = List.of(jwtClaimsSet.getIssuer());
 
             //to check token type and identify caller
             String innerAccessToken;
