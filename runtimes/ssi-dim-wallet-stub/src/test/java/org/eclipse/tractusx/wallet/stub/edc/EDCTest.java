@@ -134,7 +134,8 @@ class EDCTest {
         String vpToken = responseBody.getPresentation().getFirst();
         JWTClaimsSet jwtClaimsSet = tokenService.verifyTokenAndGetClaims(vpToken);
 
-        Assertions.assertTrue(jwtClaimsSet.getAudience().contains(providerDid));
+        // VP audience should be the issuer of the outer/wrapper token (the requesting party)
+        Assertions.assertTrue(jwtClaimsSet.getAudience().contains(consumerDid));
         Assertions.assertEquals(jwtClaimsSet.getSubject(), consumerDid);
         Assertions.assertEquals(jwtClaimsSet.getIssuer(), consumerDid);
 
@@ -214,7 +215,8 @@ class EDCTest {
         String vpToken = responseBody.getPresentation().getFirst();
         JWTClaimsSet jwtClaimsSet = tokenService.verifyTokenAndGetClaims(vpToken);
 
-        Assertions.assertTrue(jwtClaimsSet.getAudience().contains(providerDid));
+        // VP audience should be the issuer of the outer/wrapper token (the requesting party)
+        Assertions.assertTrue(jwtClaimsSet.getAudience().contains(consumerDid));
         Assertions.assertEquals(jwtClaimsSet.getSubject(), consumerDid);
         Assertions.assertEquals(jwtClaimsSet.getIssuer(), consumerDid);
 
